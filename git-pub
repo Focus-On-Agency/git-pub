@@ -1,44 +1,52 @@
 #!/bin/sh
 # File: git-pub
 
-# Funzione per richiedere input con un prompt
+# Function to prompt for input
 prompt() {
   local var_name=$1
   local prompt_text=$2
   local input
   while true; do
-    read -p "$prompt_text: " input
+    # Use `readline` to enable navigation with arrow keys
+    read -e -p "$prompt_text: " input
     if [ -n "$input" ]; then
       eval "$var_name=\"$input\""
       break
     else
-      echo "Errore: il campo non può essere vuoto."
+      echo "Error: the field cannot be empty."
     fi
   done
 }
 
-# Funzione per richiedere input opzionale
+# Function to prompt for optional input
 prompt_optional() {
   local var_name=$1
   local prompt_text=$2
   local input
-  read -p "$prompt_text (Premi invio per saltare): " input
+  # Use `readline` to enable navigation with arrow keys
+  read -e -p "$prompt_text (Press enter to skip): " input
   eval "$var_name=\"$input\""
 }
 
-# Richiede la tipologia del commit
-prompt COMMIT_TYPE "Inserisci la tipologia del commit (FIX, UPDATE, ADD, PARTIAL)"
+# Function to convert input to uppercase
+to_uppercase() {
+  echo "$1" | tr '[:lower:]' '[:upper:]'
+}
 
-# Richiede il numero della task (opzionale)
-prompt_optional TASK_NUMBER "Inserisci il numero della task (se presente)"
+# Prompt for the commit type
+prompt COMMIT_TYPE "Enter the commit type (FIX, UPDATE, ADD, PARTIAL)"
+COMMIT_TYPE=$(to_uppercase "$COMMIT_TYPE")
 
-# Richiede il titolo del commit
-prompt COMMIT_TITLE "Inserisci il titolo del commit"
+# Prompt for the task number (optional)
+prompt_optional TASK_NUMBER "Enter the task number (if present)"
 
-# Richiede il corpo del commit (opzionale)
-prompt_optional COMMIT_BODY "Inserisci il corpo del commit"
+# Prompt for the commit title
+prompt COMMIT_TITLE "Enter the commit title"
 
-# Mappa delle icone identificative per ogni tipologia di commit
+# Prompt for the commit body (optional)
+prompt_optional COMMIT_BODY "Enter the commit body"
+
+# Mapping of icons for each commit type
 get_icon() {
   case $1 in
     FIX) echo "🔧";;
@@ -51,19 +59,19 @@ get_icon() {
 
 ICON=$(get_icon "$COMMIT_TYPE")
 
-# Esegue git add e controlla l'esito
+# Execute git add and check the result
 if ! git add .; then
   echo "Git add failed"
   exit 1
 fi
 
-# Esegue git commit con il messaggio formattato e controlla l'esito
+# Execute git commit with the formatted message and check the result
 if ! git commit -m "[$COMMIT_TYPE] $ICON | $TASK_NUMBER $COMMIT_TITLE" -m "$COMMIT_BODY"; then
   echo "Git commit failed"
   exit 1
 fi
 
-# Esegue git push e controlla l'esito
+# Execute git push and check the result
 if ! git push; then
   echo "Git push failed"
   exit 1
