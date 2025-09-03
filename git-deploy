@@ -1,0 +1,116 @@
+#!/bin/sh
+# File: git-pub
+
+# Function to prompt for input
+prompt() {
+  local var_name=$1
+  local prompt_text=$2
+  local input
+  while true; do
+    # Use `readline` to enable navigation with arrow keys
+    read -e -p "$prompt_text: " input
+    if [ -n "$input" ]; then
+      eval "$var_name=\"$input\""
+      break
+    else
+      echo "Error: the field cannot be empty."
+    fi
+  done
+}
+
+# Function to prompt for optional input
+prompt_optional() {
+  local var_name=$1
+  local prompt_text=$2
+  local input
+  # Use `readline` to enable navigation with arrow keys
+  read -e -p "$prompt_text (Press enter to skip): " input
+  eval "$var_name=\"$input\""
+}
+
+# Function to convert input to uppercase
+to_uppercase() {
+  echo "$1" | tr '[:lower:]' '[:upper:]'
+}
+
+# Prompt for the commit type
+prompt COMMIT_TYPE "Enter the commit type (FIX, UPDATE, ADD, PARTIAL)"
+COMMIT_TYPE=$(to_uppercase "$COMMIT_TYPE")
+
+# Prompt for the task number (optional)
+prompt_optional TASK_NUMBER "Enter the task number (if present)"
+
+# Prompt for the commit title
+prompt COMMIT_TITLE "Enter the commit title"
+
+# Prompt for the commit body (optional)
+prompt_optional COMMIT_BODY "Enter the commit body"
+
+# Mapping of icons for each commit type
+get_icon() {
+  case $1 in
+    FIX) echo "🔧";;
+    UPDATE) echo "🔄";;
+    ADD) echo "➕";;
+    PARTIAL) echo "✳️";;
+    *) echo "";  # Default empty if no match
+  esac
+}
+
+ICON=$(get_icon "$COMMIT_TYPE")
+
+# Detect package manager
+if [ -f "yarn.lock" ]; then
+  PM="yarn"
+elif [ -f "package-lock.json" ]; then
+  PM="npm"
+else
+  echo "Error: No yarn.lock or package-lock.json found to determine package manager."
+  exit 1
+fi
+
+# Install dependencies
+if [ "$PM" = "yarn" ]; then
+  if ! yarn install; then
+    echo "Yarn install failed"
+    exit 1
+  fi
+else
+  if ! npm install; then
+    echo "NPM install failed"
+    exit 1
+  fi
+fi
+
+# Build project
+if [ "$PM" = "yarn" ]; then
+  if ! yarn build; then
+    echo "Yarn build failed"
+    exit 1
+  fi
+else
+  if ! npm run build; then
+    echo "NPM build failed"
+    exit 1
+  fi
+fi
+
+# Execute git add and check the result
+if ! git add .; then
+  echo "Git add failed"
+  exit 1
+fi
+
+# Execute git commit with the formatted message and check the result
+if ! git commit -m "[$COMMIT_TYPE] $ICON | $TASK_NUMBER $COMMIT_TITLE" -m "$COMMIT_BODY" -m "DEPLOY"; then
+  echo "Git commit failed"
+  exit 1
+fi
+
+# Execute git push and check the result
+if ! git push; then
+  echo "Git push failed"
+  exit 1
+fi
+
+echo "Push successful"

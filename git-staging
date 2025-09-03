@@ -1,0 +1,101 @@
+#!/bin/sh
+# File: git-pub
+
+prompt() {
+  local var_name=$1
+  local prompt_text=$2
+  local input
+  while true; do
+    read -e -p "$prompt_text: " input
+    if [ -n "$input" ]; then
+      eval "$var_name=\"$input\""
+      break
+    else
+      echo "Error: the field cannot be empty."
+    fi
+  done
+}
+
+prompt_optional() {
+  local var_name=$1
+  local prompt_text=$2
+  local input
+  read -e -p "$prompt_text (Press enter to skip): " input
+  eval "$var_name=\"$input\""
+}
+
+to_uppercase() {
+  echo "$1" | tr '[:lower:]' '[:upper:]'
+}
+
+prompt COMMIT_TYPE "Enter the commit type (FIX, UPDATE, ADD, PARTIAL)"
+COMMIT_TYPE=$(to_uppercase "$COMMIT_TYPE")
+prompt_optional TASK_NUMBER "Enter the task number (if present)"
+prompt COMMIT_TITLE "Enter the commit title"
+prompt_optional COMMIT_BODY "Enter the commit body"
+
+get_icon() {
+  case $1 in
+    FIX) echo "🔧";;
+    UPDATE) echo "🔄";;
+    ADD) echo "➕";;
+    PARTIAL) echo "✳️";;
+    *) echo "";;
+  esac
+}
+
+ICON=$(get_icon "$COMMIT_TYPE")
+
+# Detect package manager
+if [ -f "yarn.lock" ]; then
+  PM="yarn"
+elif [ -f "package-lock.json" ]; then
+  PM="npm"
+else
+  echo "Error: No yarn.lock or package-lock.json found to determine package manager."
+  exit 1
+fi
+
+# Install dependencies
+if [ "$PM" = "yarn" ]; then
+  if ! yarn install; then
+    echo "Yarn install failed"
+    exit 1
+  fi
+else
+  if ! npm install; then
+    echo "NPM install failed"
+    exit 1
+  fi
+fi
+
+# Build project
+if [ "$PM" = "yarn" ]; then
+  if ! yarn build; then
+    echo "Yarn build failed"
+    exit 1
+  fi
+else
+  if ! npm run build; then
+    echo "NPM build failed"
+    exit 1
+  fi
+fi
+
+# Git ops
+if ! git add .; then
+  echo "Git add failed"
+  exit 1
+fi
+
+if ! git commit -m "[$COMMIT_TYPE] $ICON | $TASK_NUMBER $COMMIT_TITLE" -m "$COMMIT_BODY" -m "STAGING"; then
+  echo "Git commit failed"
+  exit 1
+fi
+
+if ! git push; then
+  echo "Git push failed"
+  exit 1
+fi
+
+echo "Push successful"
