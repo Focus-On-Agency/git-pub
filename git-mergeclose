@@ -1,0 +1,58 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Usage:
+#   ./merge-close.sh [ISSUE_ID] [FEATURE_BRANCH]
+# Esempi:
+#   ./merge-close.sh 3 3-be---configurare-ci
+#   ./merge-close.sh            # se sei già sul branch "3-be---configurare-ci" (estrae "3")
+
+# 1) Verifica repo
+git rev-parse --is-inside-work-tree >/dev/null
+
+# 2) Parametri
+ISSUE="${1:-}"
+FEATURE_BRANCH="${2:-$(git rev-parse --abbrev-ref HEAD)}"
+
+# 3) Estrai ISSUE dal nome branch se non passato (primo gruppo numerico)
+if [[ -z "${ISSUE}" ]]; then
+  if [[ "${FEATURE_BRANCH}" =~ ([0-9]+) ]]; then
+    ISSUE="${BASH_REMATCH[1]}"
+  else
+    echo "ERRORE: ISSUE_ID non passato e non trovato nel nome branch '${FEATURE_BRANCH}'." >&2
+    exit 1
+  fi
+fi
+
+# 4) Scopri il default branch remoto (fallback: main)
+DEFAULT_BRANCH="$(git remote show origin | awk '/HEAD branch/ {print $NF}')"
+DEFAULT_BRANCH="${DEFAULT_BRANCH:-main}"
+
+# 5) Safety checks
+CURRENT="$(git rev-parse --abbrev-ref HEAD)"
+if [[ "${CURRENT}" == "${DEFAULT_BRANCH}" ]]; then
+  echo "Sei già su '${DEFAULT_BRANCH}'. Passa un feature branch o lancia dal feature branch." >&2
+  exit 1
+fi
+if ! git diff --quiet || ! git diff --cached --quiet; then
+  echo "Working tree non pulita. Fai commit/stash prima." >&2
+  exit 1
+fi
+
+# 6) Assicurati che il branch remoto esista/aggiorna remoti
+git fetch origin --prune
+git push -u origin "${FEATURE_BRANCH}"
+
+# 7) Aggiorna default branch e fai merge con commit messaggiato
+git checkout "${DEFAULT_BRANCH}"
+git pull --ff-only origin "${DEFAULT_BRANCH}"
+git merge --no-ff "${FEATURE_BRANCH}" -m "merge(${FEATURE_BRANCH}): closes #${ISSUE}"
+
+# 8) Push su default (qui fallisce se il branch è protetto o PR-required)
+git push origin "${DEFAULT_BRANCH}"
+
+# 9) Pulizia branch locale + remoto (non fallire se già eliminato)
+git branch -d "${FEATURE_BRANCH}" || true
+git push origin --delete "${FEATURE_BRANCH}" || true
+
+echo "✅ Merge '${FEATURE_BRANCH}' → '${DEFAULT_BRANCH}' fatto. L’issue #${ISSUE} si chiuderà quando il commit è su GitHub."

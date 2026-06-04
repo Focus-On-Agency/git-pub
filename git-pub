@@ -1,16 +1,19 @@
-#!/bin/sh
+#!/usr/bin/env bash
 # File: git-pub
 
-# Function to prompt for input
+set -e
+
+# Function to prompt for required input
 prompt() {
-  local var_name=$1
-  local prompt_text=$2
-  local input
+  local var_name="$1"
+  local prompt_text="$2"
+  local input=""
+
   while true; do
-    # Use `readline` to enable navigation with arrow keys
     read -e -p "$prompt_text: " input
+
     if [ -n "$input" ]; then
-      eval "$var_name=\"$input\""
+      printf -v "$var_name" '%s' "$input"
       break
     else
       echo "Error: the field cannot be empty."
@@ -20,17 +23,28 @@ prompt() {
 
 # Function to prompt for optional input
 prompt_optional() {
-  local var_name=$1
-  local prompt_text=$2
-  local input
-  # Use `readline` to enable navigation with arrow keys
+  local var_name="$1"
+  local prompt_text="$2"
+  local input=""
+
   read -e -p "$prompt_text (Press enter to skip): " input
-  eval "$var_name=\"$input\""
+  printf -v "$var_name" '%s' "$input"
 }
 
 # Function to convert input to uppercase
 to_uppercase() {
   echo "$1" | tr '[:lower:]' '[:upper:]'
+}
+
+# Mapping of icons for each commit type
+get_icon() {
+  case "$1" in
+    FIX) echo "🔧" ;;
+    UPDATE) echo "🔄" ;;
+    ADD) echo "➕" ;;
+    PARTIAL) echo "✳️" ;;
+    *) echo "" ;;
+  esac
 }
 
 # Prompt for the commit type
@@ -46,35 +60,52 @@ prompt COMMIT_TITLE "Enter the commit title"
 # Prompt for the commit body (optional)
 prompt_optional COMMIT_BODY "Enter the commit body"
 
-# Mapping of icons for each commit type
-get_icon() {
-  case $1 in
-    FIX) echo "🔧";;
-    UPDATE) echo "🔄";;
-    ADD) echo "➕";;
-    PARTIAL) echo "✳️";;
-    *) echo "";  # Default empty if no match
-  esac
-}
+# Prompt for the version/tag (optional)
+prompt_optional TAG_VERSION "Enter the version/tag to create (example: v1.2.3)"
 
 ICON=$(get_icon "$COMMIT_TYPE")
 
-# Execute git add and check the result
+# Build commit title cleanly
+if [ -n "$TASK_NUMBER" ]; then
+  COMMIT_MESSAGE="[$COMMIT_TYPE] $ICON | $TASK_NUMBER $COMMIT_TITLE"
+else
+  COMMIT_MESSAGE="[$COMMIT_TYPE] $ICON | $COMMIT_TITLE"
+fi
+
+# Git add
 if ! git add .; then
   echo "Git add failed"
   exit 1
 fi
 
-# Execute git commit with the formatted message and check the result
-if ! git commit -m "[$COMMIT_TYPE] $ICON | $TASK_NUMBER $COMMIT_TITLE" -m "$COMMIT_BODY"; then
-  echo "Git commit failed"
-  exit 1
+# Git commit
+if [ -n "$COMMIT_BODY" ]; then
+  git commit -m "$COMMIT_MESSAGE" -m "$COMMIT_BODY"
+else
+  git commit -m "$COMMIT_MESSAGE"
 fi
 
-# Execute git push and check the result
-if ! git push; then
-  echo "Git push failed"
-  exit 1
+# Create tag only if a version/tag was provided
+if [ -n "$TAG_VERSION" ]; then
+  if git rev-parse "$TAG_VERSION" >/dev/null 2>&1; then
+    echo "Tag '$TAG_VERSION' already exists locally."
+    exit 1
+  fi
+
+  if git ls-remote --exit-code --tags origin "refs/tags/$TAG_VERSION" >/dev/null 2>&1; then
+    echo "Tag '$TAG_VERSION' already exists on remote."
+    exit 1
+  fi
+
+  git tag -a "$TAG_VERSION" -m "Release $TAG_VERSION"
+  echo "Created tag: $TAG_VERSION"
+fi
+
+# Push branch and annotated tags
+if [ -n "$TAG_VERSION" ]; then
+  git push --follow-tags
+else
+  git push
 fi
 
 echo "Push successful"
