@@ -101,6 +101,17 @@ if [ "$SKIP_BUILD" != "true" ]; then
   fi
 fi
 
+# Encrypt Trellis vaults when applicable
+if ! TRELLIS_OUTPUT=$(trellis vault encrypt 2>&1); then
+  if [[ "$TRELLIS_OUTPUT" != *"No Trellis project detected"* ]]; then
+    printf '%s\n' "$TRELLIS_OUTPUT" >&2
+    echo "Trellis vault encryption failed. Commit aborted."
+    exit 1
+  fi
+elif [ -n "$TRELLIS_OUTPUT" ]; then
+  printf '%s\n' "$TRELLIS_OUTPUT"
+fi
+
 # ---- git ops ----
 git add . || { echo "Git add failed"; exit 1; }
 
