@@ -3,6 +3,46 @@
 
 set -e
 
+SKIP_VAULT=false
+
+print_help() {
+  cat <<'EOF'
+Usage: git-pub [options]
+
+Options:
+  -v, --skip-vault, --no-vault   Salta trellis vault encrypt
+  -h, --help                     Mostra questo aiuto
+EOF
+}
+
+# Parse flags
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    -v|--skip-vault|--no-vault)
+      SKIP_VAULT=true
+      shift
+      ;;
+    -h|--help)
+      print_help
+      exit 0
+      ;;
+    --)
+      shift
+      break
+      ;;
+    -*)
+      echo "Unknown option: $1"
+      print_help
+      exit 1
+      ;;
+    *)
+      echo "Unexpected argument: $1"
+      print_help
+      exit 1
+      ;;
+  esac
+done
+
 # Function to prompt for required input
 prompt() {
   local var_name="$1"
@@ -73,14 +113,18 @@ else
 fi
 
 # Encrypt Trellis vaults when applicable
-if ! TRELLIS_OUTPUT=$(trellis vault encrypt 2>&1); then
-  if [[ "$TRELLIS_OUTPUT" != *"No Trellis project detected"* ]]; then
-    printf '%s\n' "$TRELLIS_OUTPUT" >&2
-    echo "Trellis vault encryption failed. Commit aborted."
-    exit 1
+if [ "$SKIP_VAULT" = "true" ]; then
+  echo "Trellis vault encryption skipped."
+else
+  if ! TRELLIS_OUTPUT=$(trellis vault encrypt 2>&1); then
+    if [[ "$TRELLIS_OUTPUT" != *"No Trellis project detected"* ]]; then
+      printf '%s\n' "$TRELLIS_OUTPUT" >&2
+      echo "Trellis vault encryption failed. Commit aborted." >&2
+      exit 1
+    fi
+  elif [ -n "$TRELLIS_OUTPUT" ]; then
+    printf '%s\n' "$TRELLIS_OUTPUT"
   fi
-elif [ -n "$TRELLIS_OUTPUT" ]; then
-  printf '%s\n' "$TRELLIS_OUTPUT"
 fi
 
 # Git add
