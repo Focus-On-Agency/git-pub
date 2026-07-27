@@ -4,13 +4,15 @@
 set -e
 
 SKIP_BUILD=false
+PORTUNO_DEPLOY=false
 
 print_help() {
   cat <<'EOF'
 Usage: git-pub [options]
 
 Options:
-  -s, --skip-build, --no-build   Salta verifica PM (yarn/npm), install e build
+  -s, --skip-build, --no-build   Salta verifica PM, installazione e build
+  -p, --portuno                  Richiede il deploy Portuno in produzione
   -h, --help                     Mostra questo aiuto
 EOF
 }
@@ -18,11 +20,35 @@ EOF
 # ---- parse flags (sh-compatible) ----
 while [ "$#" -gt 0 ]; do
   case "$1" in
-    -s|--skip-build|--no-build) SKIP_BUILD=true; shift ;;
-    -h|--help) print_help; exit 0 ;;
-    --) shift; break ;;
-    -*) echo "Unknown option: $1"; print_help; exit 1 ;;
-    *) break ;;
+    -s|--skip-build|--no-build)
+      SKIP_BUILD=true
+      shift
+      ;;
+
+    -p|--portuno)
+      PORTUNO_DEPLOY=true
+      shift
+      ;;
+
+    -h|--help)
+      print_help
+      exit 0
+      ;;
+
+    --)
+      shift
+      break
+      ;;
+
+    -*)
+      echo "Unknown option: $1"
+      print_help
+      exit 1
+      ;;
+
+    *)
+      break
+      ;;
   esac
 done
 
@@ -31,16 +57,17 @@ prompt() {
   var_name=$1
   prompt_text=$2
   input=""
+
   while true; do
-    # read -e -p è bash-specific; teniamo la sintassi usata dall'autore
-    # shellcheck disable=SC2162
-    read -e -p "$prompt_text: " input
+    printf '%s: ' "$prompt_text"
+    IFS= read -r input
+
     if [ -n "$input" ]; then
-      eval "$var_name=\"\$input\""
+      eval "$var_name=\$input"
       break
-    else
-      echo "Error: the field cannot be empty."
     fi
+
+    echo "Error: the field cannot be empty."
   done
 }
 
@@ -48,9 +75,11 @@ prompt_optional() {
   var_name=$1
   prompt_text=$2
   input=""
-  # shellcheck disable=SC2162
-  read -e -p "$prompt_text (Press enter to skip): " input
-  eval "$var_name=\"\$input\""
+
+  printf '%s (Press enter to skip): ' "$prompt_text"
+  IFS= read -r input
+
+  eval "$var_name=\$input"
 }
 
 to_uppercase() {
@@ -58,21 +87,23 @@ to_uppercase() {
 }
 
 get_icon() {
-  case $1 in
-    FIX) echo "🔧";;
-    UPDATE) echo "🔄";;
-    ADD) echo "➕";;
-    PARTIAL) echo "✳️";;
-    *) echo "";;
+  case "$1" in
+    FIX) echo "🔧" ;;
+    UPDATE) echo "🔄" ;;
+    ADD) echo "➕" ;;
+    PARTIAL) echo "✳️" ;;
+    *) echo "" ;;
   esac
 }
 
 # ---- prompts ----
 prompt COMMIT_TYPE "Enter the commit type (FIX, UPDATE, ADD, PARTIAL)"
 COMMIT_TYPE=$(to_uppercase "$COMMIT_TYPE")
+
 prompt_optional TASK_NUMBER "Enter the task number (if present)"
 prompt COMMIT_TITLE "Enter the commit title"
 prompt_optional COMMIT_BODY "Enter the commit body"
+
 ICON=$(get_icon "$COMMIT_TYPE")
 
 # ---- PM + build (optional) ----
@@ -88,40 +119,97 @@ if [ "$SKIP_BUILD" != "true" ]; then
 
   # Install
   if [ "$PM" = "yarn" ]; then
-    yarn install || { echo "Yarn install failed"; exit 1; }
+    yarn install || {
+      echo "Yarn install failed"
+      exit 1
+    }
   else
-    npm install || { echo "NPM install failed"; exit 1; }
+    npm install || {
+      echo "NPM install failed"
+      exit 1
+    }
   fi
 
   # Build
   if [ "$PM" = "yarn" ]; then
-    yarn build || { echo "Yarn build failed"; exit 1; }
+    yarn build || {
+      echo "Yarn build failed"
+      exit 1
+    }
   else
-    npm run build || { echo "NPM build failed"; exit 1; }
+    npm run build || {
+      echo "NPM build failed"
+      exit 1
+    }
   fi
 fi
 
-# Encrypt Trellis vaults when applicable
+# ---- Trellis vault encryption ----
 if ! TRELLIS_OUTPUT=$(trellis vault encrypt 2>&1); then
-  if [[ "$TRELLIS_OUTPUT" != *"No Trellis project detected"* ]]; then
-    printf '%s\n' "$TRELLIS_OUTPUT" >&2
-    echo "Trellis vault encryption failed. Commit aborted."
-    exit 1
-  fi
+  case "$TRELLIS_OUTPUT" in
+    *"No Trellis project detected"*)
+      # Non è un progetto Trellis: continuiamo normalmente.
+      ;;
+
+    *)
+      printf '%s\n' "$TRELLIS_OUTPUT" >&2
+      echo "Trellis vault encryption failed. Commit aborted."
+      exit 1
+      ;;
+  esac
 elif [ -n "$TRELLIS_OUTPUT" ]; then
   printf '%s\n' "$TRELLIS_OUTPUT"
 fi
 
-# ---- git ops ----
-git add . || { echo "Git add failed"; exit 1; }
+# ---- git operations ----
+git add . || {
+  echo "Git add failed"
+  exit 1
+}
 
-# evita spazi doppi se TASK_NUMBER vuoto
 COMMIT_PREFIX="[$COMMIT_TYPE] $ICON"
-[ -n "$TASK_NUMBER" ] && COMMIT_PREFIX="$COMMIT_PREFIX | $TASK_NUMBER"
 
-git commit -m "$COMMIT_PREFIX $COMMIT_TITLE" -m "$COMMIT_BODY" -m "DEPLOY" \
-  || { echo "Git commit failed"; exit 1; }
+if [ -n "$TASK_NUMBER" ]; then
+  COMMIT_PREFIX="$COMMIT_PREFIX | $TASK_NUMBER"
+fi
 
-git push || { echo "Git push failed"; exit 1; }
+git commit \
+  -m "$COMMIT_PREFIX $COMMIT_TITLE" \
+  -m "$COMMIT_BODY" \
+  -m "DEPLOY" \
+  || {
+    echo "Git commit failed"
+    exit 1
+  }
+
+git push || {
+  echo "Git push failed"
+  exit 1
+}
 
 echo "Push successful"
+
+# ---- Portuno deployment request ----
+if [ "$PORTUNO_DEPLOY" = "true" ]; then
+  if ! command -v gh >/dev/null 2>&1; then
+    echo "Error: GitHub CLI (gh) is not installed or is not available in PATH."
+    exit 1
+  fi
+
+  REVISION=$(git rev-parse HEAD) || {
+    echo "Unable to determine the current Git revision."
+    exit 1
+  }
+
+  echo "Requesting Portuno production deploy for revision $REVISION..."
+
+  gh workflow run request-deploy.yml \
+    -f environment=production \
+    -f revision="$REVISION" \
+    || {
+      echo "Portuno deploy request failed."
+      exit 1
+    }
+
+  echo "Portuno deploy requested successfully."
+fi
